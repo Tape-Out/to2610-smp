@@ -1,0 +1,111 @@
+name: to2610-smp
+version: 0.1.0
+spec: '0.1'
+kind: ip
+lang: verilog
+identity:
+  slug: to2610-smp
+  display_name: Two-core symmetric chip
+  summary: 'A symmetric two-core chip for the ECOS 2610 shuttle: to2610-amp with numbered harts, both cores entering the same image, and a bus arbiter that keeps AMO read-write pairs together and settles LR/SC reservations across cores.'
+  category: soc
+  subcategories:
+  - riscv
+  ip_family: kianriscv
+  integration_profile: []
+  maturity: simulated
+contract:
+  version: 1
+  ctrl:
+    shape: none
+    aw: 32
+    dw: 32
+deps:
+  gf180mcu-kianv-rv32ima-sv32: ^0.1
+  to2610-kvc: ^0.1
+  to2610-soc: ^0.1
+  to2610-amp: ^0.1
+emit:
+- kind: foreign
+  lang: sv
+  top: soc_frame
+  # 源码树是拼出来的：to2610-amp 拼好的那一份套上本仓的补丁，仲裁换成管预留的那一个
+  setup: src
+  rtl:
+  - build/src/chip_core.sv
+  - { glob: "build/src/*.v" }
+  - build/src/sdram/mt48lc16m16a2_ctrl.v
+  - { glob: "build/src/kianv_harris_edition/*.v" }
+  includes:
+  - build/src
+  - build/src/kianv_harris_edition
+  # 与 to2610-kvc 交付的那一颗同一组取值
+  defines:
+    SYSTEM_CLK: 50000000
+    NUM_ENTRIES_ITLB: 32
+    NUM_ENTRIES_DTLB: 32
+    TRP_NS: 15
+    TRCD_NS: 15
+    TRFC_NS: 66
+    TWR_NS: 15
+    CAS: 2
+    TREFI_NS: 7800
+    BYPASS_CACHES: 1
+    SYNTHESIS: 1
+  clock:
+    port: clk
+  reset:
+    port: rst_n
+    active: low
+    sync: false
+  ports:
+  - endpoint: pads
+    kind: physical
+    type: SocPads
+    map:
+      i: bidir_in
+      o: bidir_out
+      oe: bidir_oe
+  - endpoint: xpads
+    kind: physical
+    type: SocXPads
+    map:
+      i: x_in
+      o: x_out
+      oe: x_oe
+  limits:
+  - 两个核轮着用一条总线，换人要空三拍；两个都在忙时各自比单核慢一半上下
+  - 外部中断只进第一个核；第二个核有自己的 CLINT（核间中断与计时器）与一根门铃中断
+  - 预留按字记，一个核一条；取页表的读也会改写它，随后那一次真正的读再盖回来
+  - 缓存旁路、SDRAM 固定 32 MiB、主频固定 50 MHz、没有 JTAG，同 to2610-kvc
+asic:
+  top: to2610_smp
+  frame: mpc
+  mhz: 50
+  flow: syn_sta
+  # 引脚与 to2610-soc 逐位相同：三颗用同一块底板
+  pads:
+  - { in: bidir_in, out: bidir_out, oe: bidir_oe }
+  - { in: x_in, out: x_out, oe: x_oe }
+tasks:
+  src:
+    desc: 拼源码树：to2610-amp 拼好的那一份套上 patch/smp.patch，仲裁换成本仓 hwsrc 里的那一个
+    run: bash htest/setup.sh {{dep.gf180mcu-kianv-rv32ima-sv32}} {{dep.to2610-soc}} {{dep.to2610-amp}}
+  arb:
+    desc: 仲裁的单元测试：原样要过，六处埋错每处都要红
+    run: bash htest/arb.sh {{out}} {{dep.to2610-kvc}}
+    timeout: 900
+  arbiter-faults:
+    desc: 把仲裁里的一条规矩去掉、重出 .v，两个核一起的那一段要红在对应的那一句上，四处
+    run: bash htest/arbiter-faults.sh {{out}} {{dep.gf180mcu-kianv-rv32ima-sv32}} {{dep.to2610-kvc}} {{dep.to2610-soc}}
+    timeout: 5400
+  chip:
+    desc: 出流片的 .v，在它上面跑 to2610-kvc 与 to2610-soc 的各段，再跑两个核一起的那一段
+    run: bash htest/chip.sh {{out}} {{dep.gf180mcu-kianv-rv32ima-sv32}} {{dep.to2610-kvc}} {{dep.to2610-soc}}
+    timeout: 14400
+test:
+  upstream:
+  - { name: arb, task: arb, timeout: 900 }
+  - { name: chip, task: chip, timeout: 14400 }
+targets:
+  foreign:
+    driver: foreign
