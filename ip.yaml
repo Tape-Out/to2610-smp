@@ -106,6 +106,7 @@ test:
   upstream:
   - { name: arb, task: arb, timeout: 900 }
   - { name: chip, task: chip, timeout: 14400 }
+  - { name: arbiter-faults, task: arbiter-faults, timeout: 5400 }
 targets:
   foreign:
     driver: foreign

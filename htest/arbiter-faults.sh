@@ -13,9 +13,12 @@ L=$(realpath "$3")
 S=$(realpath "$4")
 rm -rf "$O"
 mkdir -p "$O/ws/to2610-smp"
-for d in "$here"/../*/; do
-  n=$(basename "$d")
-  [ "$n" = to2610-smp ] || ln -s "$(realpath "$d")" "$O/ws/$n"
+# 照这次息壤的搜索路径去链：流水线上各个依赖不在本仓旁边
+for r in $(grep -o -- '-p [^ ]*' <<< "$XIRANG" | cut -c4-) "$here/.."; do
+  for d in "$r"/*/; do
+    n=$(basename "$d")
+    [ "$n" = to2610-smp ] || [ -e "$O/ws/$n" ] || ln -s "$(realpath "$d")" "$O/ws/$n"
+  done
 done
 tar cf - --exclude=build --exclude=.git . | tar xf - -C "$O/ws/to2610-smp"
 RAN="${XIRANG%% -p *} -p $O/ws"
