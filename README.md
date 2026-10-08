@@ -4,7 +4,7 @@ A symmetric two-core chip for the ECOS 2610 shuttle: [`to2610-amp`](https://gith
 
 ![maturity](https://img.shields.io/badge/maturity-simulated-yellow) ![license](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0%20OR%20MulanPSL--2.0-blue)
 
-The core is upstream's KianV, its submodule untouched, taken from [`gf180mcu-kianv-rv32ima-sv32`](https://github.com/Tape-Out/gf180mcu-kianv-rv32ima-sv32); the peripherals and the pads are those of [`to2610-soc`](https://github.com/Tape-Out/to2610-soc); the second core, its CLINT and the inter-core page come from `to2610-amp`. What this repository adds:
+The core is upstream's KianV, its submodule untouched, taken from [`gf180mcu-kianv-rv32ima-sv32`](https://github.com/Tape-Out/gf180mcu-kianv-rv32ima-sv32); the peripherals and the pads are those of [`to2610-kvc`](https://github.com/Tape-Out/to2610-kvc); the second core, its CLINT and the inter-core page come from `to2610-amp`. What this repository adds:
 
 | File | What |
 |:--:|:--:|
@@ -19,7 +19,7 @@ The functions, the registers, the pad table, the tests and the limits are in [`d
 |:--:|:--:|:--:|
 | `mhartid` reads 0 | both cores look the same to software | a parameter, 0 and 1 |
 | an AMO is a read and a write on the bus, three cycles apart | the other core can write in between | the arbiter keeps the bus with a core from its AMO read until its AMO write |
-| LR sets one bit, without an address; SC looks at that bit only | a store from the other core does not clear it | the arbiter records the word each core reserved, drops the reservation when the other core writes that word, and decides the SC in the cycle it would reach the bus |
+| the reservation sees only the core's own loads and stores | a store from the other core does not clear it | the arbiter records the word each core reserved, drops the reservation when the other core writes that word, and decides the SC in the cycle it would reach the bus |
 
 An SC whose reservation is gone, or that addresses another word, never reaches the bus; the core is told and takes its failing path. Deciding and writing are one event, so no window is left between a check inside the core and the write.
 
@@ -37,7 +37,7 @@ $ ran test to2610-smp                     # the arbiter alone, then the chip tes
 $ ran asic to2610-smp                     # to2610_smp.v, ecc at 50 MHz, report.json
 ```
 
-`arb` drives the arbiter with two model cores and a slow slave, then plants seven faults in it, one at a time; each must turn the test red. `chip` runs on the Verilog file that goes to the shuttle: the tests of `to2610-kvc` and `to2610-soc` unchanged, then `htest/smp`, one program on both cores. Its first shared counter is incremented without any atomics and must lose updates; the next three, with `amoadd`, a spinlock on `amoswap`, and LR/SC, must not.
+`arb` drives the arbiter with two model cores and a slow slave, then plants seven faults in it, one at a time; each must turn the test red. `chip` runs on the Verilog file that goes to the shuttle: the tests of `to2610-kvc` unchanged, then `htest/smp`, one program on both cores. Its first shared counter is incremented without any atomics and must lose updates; the next three, with `amoadd`, a spinlock on `amoswap`, and LR/SC, must not.
 
 ## License
 

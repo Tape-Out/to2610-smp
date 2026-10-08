@@ -3,14 +3,13 @@
 # 两个核一起的那一段要红在对应的那一句上。脚本里的 expect 都拿掉、只留 done，让程序跑到底，看是哪几句 BAD；
 # 卡住没跑到 done 的也算红，但该红的那一句得在卡住之前就红了。
 # 在临时的工作区里做（别的仓软链接过来，本仓拷一份），不动真的仓。
-# 用法：arbiter-faults.sh <输出目录> <gf180mcu-kianv-rv32ima-sv32 仓> <to2610-kvc 仓> <to2610-soc 仓>      MUTS=名字,名字 只跑这几条
+# 用法：arbiter-faults.sh <输出目录> <gf180mcu-kianv-rv32ima-sv32 仓> <to2610-kvc 仓>      MUTS=名字,名字 只跑这几条
 set -u
 cd "$(dirname "$0")/.."
 here=$PWD
 O=$(realpath -m "$1")
 K=$(realpath "$2")
 L=$(realpath "$3")
-S=$(realpath "$4")
 rm -rf "$O"
 mkdir -p "$O/ws/to2610-smp"
 # 照这次息壤的搜索路径去链：流水线上各个依赖不在本仓旁边
@@ -29,11 +28,11 @@ make -s -C htest/smp O="$O/smp" || exit 1
 python3 "$L/sw/pack.py" "$O/boot/boot.bin" "$O/smp/smp.bin" "$O/smp.flash" > /dev/null || exit 1
 echo "expect done" > "$O/script"
 
-# 名字~该红的那一句（空格写成下划线）。表里另外几条（nofair、nocool、leak、nogo）在这段程序里看不出来，由单元测试管
+# 名字~该红的那一句（空格写成下划线）。表里另外几条（nofair、nocool、leak、nogo）在这段程序里看不出来，由单元测试管；
+# noaddr 也是：核里的预留同样记着地址（黑盒仓的 lrsc 补丁），写错了字的 SC 在核里就判了失败，到不了仲裁
 WANT='nolock~amo
 noresv~lrsc
-nokill~kill
-noaddr~sc_other'
+nokill~kill'
 
 # 出 .v、编仿真器、跑两个核的那一段。回 BAD 的那几句（空格隔开），没跑到 done 的末尾加 stuck
 one() {
@@ -41,7 +40,7 @@ one() {
   rm -rf "$C" && mkdir -p "$C"
   (cd "$R" && $RAN asic to2610-smp --no-run -o "$C/asic" > "$C/asic.log" 2>&1) || { echo "出 .v 没成：$(tail -n 2 "$C/asic.log" | tr '\n' ' ')"; return 1; }
   top=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['top'])" "$C/asic/report.json")
-  python3 "$S/htest/shim.py" "$C/asic/report.json" > "$C/tb.v"
+  python3 "$L/htest/shim.py" "$C/asic/report.json" > "$C/tb.v"
   bash "$K/htest/sim.sh" "$C/sim" "$C/tb.v" "$C/asic/$top.v" > "$C/sim.log" 2>&1 || { echo "仿真器没编成"; return 1; }
   "$C/sim/Vtb" +flash="$O/smp.flash@0" +script="$O/script" +max=40000000 > "$C/smp.log" 2> "$C/smp.err" || stuck=stuck
   tr -d '\r' < "$C/smp.log" | sed -n 's/^\(.*\) BAD .*/\1/p' | tr ' ' '_' | tr '\n' ' '

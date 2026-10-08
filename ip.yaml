@@ -22,12 +22,11 @@ contract:
 deps:
   gf180mcu-kianv-rv32ima-sv32: ^0.1
   to2610-kvc: ^0.1
-  to2610-soc: ^0.1
   to2610-amp: ^0.1
 emit:
 - kind: foreign
   lang: sv
-  top: soc_frame
+  top: chip_core
   # 源码树是拼出来的：to2610-amp 拼好的那一份套上本仓的补丁，仲裁换成管预留的那一个
   setup: src
   rtl:
@@ -58,20 +57,19 @@ emit:
     active: low
     sync: false
   ports:
+  # 引脚与 to2610-kvc 逐位相同：上游并成的那条 54 位双向焊盘总线
   - endpoint: pads
     kind: physical
-    type: SocPads
+    type: KianvPads
     map:
       i: bidir_in
       o: bidir_out
       oe: bidir_oe
-  - endpoint: xpads
-    kind: physical
-    type: SocXPads
-    map:
-      i: x_in
-      o: x_out
-      oe: x_oe
+      cs: bidir_cs
+      sl: bidir_sl
+      ie: bidir_ie
+      pu: bidir_pu
+      pd: bidir_pd
   limits:
   - 两个核轮着用一条总线，换人要空三拍；两个都在忙时各自比单核慢一半上下
   - 外部中断只进第一个核；第二个核有自己的 CLINT（核间中断与计时器）与一根门铃中断
@@ -82,25 +80,25 @@ asic:
   frame: mpc
   mhz: 50
   flow: syn_sta
-  # 引脚与 to2610-soc 逐位相同：三颗用同一块底板
+  # 引脚与 to2610-kvc 逐位相同，原样占 payload 的 0 到 53 位：kvc、amp、smp 三颗用同一块底板
   pads:
   - { in: bidir_in, out: bidir_out, oe: bidir_oe }
-  - { in: x_in, out: x_out, oe: x_oe }
+  unused: [bidir_cs, bidir_sl, bidir_ie, bidir_pu, bidir_pd]
 tasks:
   src:
     desc: 拼源码树：to2610-amp 拼好的那一份套上 patch/smp.patch，仲裁换成本仓 hwsrc 里的那一个
-    run: bash htest/setup.sh {{dep.gf180mcu-kianv-rv32ima-sv32}} {{dep.to2610-soc}} {{dep.to2610-amp}}
+    run: bash htest/setup.sh {{dep.gf180mcu-kianv-rv32ima-sv32}} {{dep.to2610-amp}}
   arb:
     desc: 仲裁的单元测试：原样要过，六处埋错每处都要红
     run: bash htest/arb.sh {{out}} {{dep.to2610-kvc}}
     timeout: 900
   arbiter-faults:
-    desc: 把仲裁里的一条规矩去掉、重出 .v，两个核一起的那一段要红在对应的那一句上，四处
-    run: bash htest/arbiter-faults.sh {{out}} {{dep.gf180mcu-kianv-rv32ima-sv32}} {{dep.to2610-kvc}} {{dep.to2610-soc}}
+    desc: 把仲裁里的一条规矩去掉、重出 .v，两个核一起的那一段要红在对应的那一句上，三处
+    run: bash htest/arbiter-faults.sh {{out}} {{dep.gf180mcu-kianv-rv32ima-sv32}} {{dep.to2610-kvc}}
     timeout: 5400
   chip:
-    desc: 出流片的 .v，在它上面跑 to2610-kvc 与 to2610-soc 的各段，再跑两个核一起的那一段
-    run: bash htest/chip.sh {{out}} {{dep.gf180mcu-kianv-rv32ima-sv32}} {{dep.to2610-kvc}} {{dep.to2610-soc}}
+    desc: 出流片的 .v，在它上面跑 to2610-kvc 的各段，再跑两个核一起的那一段
+    run: bash htest/chip.sh {{out}} {{dep.gf180mcu-kianv-rv32ima-sv32}} {{dep.to2610-kvc}}
     timeout: 14400
 test:
   upstream:

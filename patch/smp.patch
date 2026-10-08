@@ -1,120 +1,25 @@
---- a/src/soc.v
-+++ b/src/soc.v
-@@ -120,6 +120,7 @@
-   wire [33:0] a_addr;
-   wire [31:0] a_wdata;
-   wire        b_valid, b_ready, b_fault, b_instr, b_irq3, b_irq7, b_go;
-+  wire        a_lock, a_lr, a_sc, a_scfail, b_lock, b_lr, b_sc, b_scfail;
-   wire [ 3:0] b_wstrb;
-   wire [33:0] b_addr;
-   wire [31:0] b_wdata;
-@@ -606,6 +607,10 @@
-       .access_fault   (a_fault),
-       .timer_counter  (timer_counter),
-       .is_instruction (a_instr),
-+      .amo_lock       (a_lock),
-+      .lr_read        (a_lr),
-+      .sc_write       (a_sc),
-+      .sc_abort       (a_scfail),
-       .icache_flush   (icache_flush),
-       .IRQ3           (IRQ3),
-       .IRQ7           (IRQ7),
-@@ -615,7 +620,8 @@
-   );
- 
-   kianv_harris_mc_edition #(
--      .RESET_ADDR      (32'h2000_0000),
-+      .RESET_ADDR      (32'h8000_0000),
-+      .HART_ID         (1),
-       .NUM_ENTRIES_ITLB(`NUM_ENTRIES_ITLB),
-       .NUM_ENTRIES_DTLB(`NUM_ENTRIES_DTLB)
-   ) kianv_B (
-@@ -631,6 +637,10 @@
-       .access_fault   (b_fault),
-       .timer_counter  (),
-       .is_instruction (b_instr),
-+      .amo_lock       (b_lock),
-+      .lr_read        (b_lr),
-+      .sc_write       (b_sc),
-+      .sc_abort       (b_scfail),
-       .icache_flush   (),
-       .IRQ3           (b_irq3),
-       .IRQ7           (b_irq7),
-@@ -639,9 +649,17 @@
-       .PC             ()
-   );
- 
--  amp_arb arb_I (
--      .clk    (clk),
--      .resetn (resetn_soc),
-+  smp_arb arb_I (
-+      .clk     (clk),
-+      .resetn  (resetn_soc),
-+      .a_lock  (a_lock),
-+      .a_lr    (a_lr),
-+      .a_sc    (a_sc),
-+      .a_scfail(a_scfail),
-+      .b_lock  (b_lock),
-+      .b_lr    (b_lr),
-+      .b_sc    (b_sc),
-+      .b_scfail(b_scfail),
-       .a_valid(a_valid),
-       .a_wstrb(a_wstrb),
-       .a_addr (a_addr),
---- a/src/amp_ctl.v
-+++ b/src/amp_ctl.v
+diff -ruN a/src/amp_ctl.v b/src/amp_ctl.v
+--- a/src/amp_ctl.v	2026-10-09 00:10:45.950529301 +0900
++++ b/src/amp_ctl.v	2026-10-09 00:10:46.114529256 +0900
 @@ -1,5 +1,5 @@
- // 两个核之间的那点东西，APB 从口，零等待。两个核都看得见这一页。
+ // 两个核之间的那点东西，挂在 KianV 的片上总线上，地址 0x4004_0000 起一页，两个核都看得见。
 -//   0x00 ID      只读，0x414D5031（"AMP1"）
 +//   0x00 ID      只读，0x534D5031（"SMP1"）
  //   0x04 RUN     第 0 位：放开第二个核的复位。复位为 0，第二个核不动，整颗与单核的那一颗一样
  //   0x08 BELL_A  给第一个核的门铃：写 1 的位置起，读回挂着的；挂着就向 PLIC 报中断
  //   0x0C ACK_A   写 1 的位把 BELL_A 清掉
-@@ -47,7 +47,7 @@
-     end
-   end
- 
--  assign prdata = sel == 3'd0 ? 32'h414D_5031 :
-+  assign prdata = sel == 3'd0 ? 32'h534D_5031 :
-                   sel == 3'd1 ? {31'h0, run} :
-                   sel == 3'd2 || sel == 3'd3 ? {24'h0, bell_a} :
-                   sel == 3'd4 || sel == 3'd5 ? {24'h0, bell_b} :
---- a/src/kianv_harris_edition/main_fsm.v
-+++ b/src/kianv_harris_edition/main_fsm.v
-@@ -89,7 +89,11 @@
-     input wire mul_ext_ready,
-     output reg is_instruction,
-     input wire stall,
--    input wire mem_ready
-+    input wire mem_ready,
-+    output wire amo_lock,
-+    output wire lr_read,
-+    output wire sc_write,
-+    input wire sc_abort
- );
- 
-   localparam load    = 7'b000_0011,
-@@ -444,7 +448,7 @@
-           is_store_unaligned: state_nxt = STORE_MISALIGN_0;
-           access_fault:       state_nxt = STORE_FAULT_0;
-           page_fault:         state_nxt = SPAGE_FAULT_0;
--          mem_ready:          state_nxt = AMO_SC_SUCCESS;
-+          mem_ready:          state_nxt = sc_abort ? AMO_SC_FAIL : AMO_SC_SUCCESS;
-           default:            state_nxt = AMO_SC_WRITE;
-         endcase
-       end
-@@ -1003,4 +1007,9 @@
-     incr_inst_retired = retire_pulse_int_final;
-   end
- 
-+  assign amo_lock = state == AMO_OP_READ || state == AMO_OP_WB || state == AMO_OP_EXEC ||
-+                    state == AMO_OP_ADDR || state == AMO_OP_WRITE;
-+  assign lr_read  = state == AMO_LR_READ;
-+  assign sc_write = state == AMO_SC_WRITE;
-+
- endmodule
---- a/src/kianv_harris_edition/control_unit.v
-+++ b/src/kianv_harris_edition/control_unit.v
+@@ -40,7 +40,7 @@
+     end else begin
+       bus_ready_o <= go;
+       if (go) begin
+-        bus_rdata_o <= sel == 3'd0 ? 32'h414D_5031 :
++        bus_rdata_o <= sel == 3'd0 ? 32'h534D_5031 :
+                        sel == 3'd1 ? {31'h0, run} :
+                        sel == 3'd2 || sel == 3'd3 ? {24'h0, bell_a} :
+                        sel == 3'd4 || sel == 3'd5 ? {24'h0, bell_b} :
+diff -ruN a/src/kianv_harris_edition/control_unit.v b/src/kianv_harris_edition/control_unit.v
+--- a/src/kianv_harris_edition/control_unit.v	2026-10-09 00:10:45.942529302 +0900
++++ b/src/kianv_harris_edition/control_unit.v	2026-10-09 00:10:46.114529256 +0900
 @@ -95,7 +95,12 @@
      input  wire mul_ready,
  
@@ -129,9 +34,9 @@
  );
  
    wire [`ALU_OP_WIDTH   -1:0] ALUOp;
-@@ -187,6 +192,10 @@
+@@ -189,6 +194,10 @@
  
-       .mem_valid(mem_valid),
+       .mem_valid(fsm_mem_valid),
        .mem_ready(mem_ready),
 +      .amo_lock (amo_lock),
 +      .lr_read  (lr_read),
@@ -140,8 +45,81 @@
  
        .mul_ext_valid(mul_ext_valid),
        .mul_ext_ready(mul_ext_ready)
---- a/src/kianv_harris_edition/kianv_harris_mc_edition.v
-+++ b/src/kianv_harris_edition/kianv_harris_mc_edition.v
+diff -ruN a/src/kianv_harris_edition/csr_exception_handler.v b/src/kianv_harris_edition/csr_exception_handler.v
+--- a/src/kianv_harris_edition/csr_exception_handler.v	2026-10-09 00:10:45.942529302 +0900
++++ b/src/kianv_harris_edition/csr_exception_handler.v	2026-10-09 00:10:46.114529256 +0900
+@@ -21,7 +21,9 @@
+ `default_nettype none
+ `include "riscv_defines.vh"
+ 
+-module csr_exception_handler (
++module csr_exception_handler #(
++    parameter HART_ID = 0
++) (
+     input  wire                      clk,
+     input  wire                      resetn,
+     input  wire [              15:0] sysclk_mhz_q8_8,
+@@ -69,7 +71,9 @@
+   wire [31:0] stimecmp;
+   wire [31:0] stimecmph;
+ 
+-  csr_unit #() csr_unit_inst (
++  csr_unit #(
++      .HART_ID(HART_ID)
++  ) csr_unit_inst (
+       .clk                   (clk),
+       .resetn                (resetn),
+       .sysclk_mhz_q8_8       (sysclk_mhz_q8_8),
+diff -ruN a/src/kianv_harris_edition/csr_unit.v b/src/kianv_harris_edition/csr_unit.v
+--- a/src/kianv_harris_edition/csr_unit.v	2026-10-09 00:10:45.946529301 +0900
++++ b/src/kianv_harris_edition/csr_unit.v	2026-10-09 00:10:46.114529256 +0900
+@@ -21,7 +21,9 @@
+ `default_nettype none
+ `include "riscv_defines.vh"
+ 
+-module csr_unit (
++module csr_unit #(
++    parameter HART_ID = 0
++) (
+     input  wire                      clk,
+     input  wire                      resetn,
+     input  wire [              15:0] sysclk_mhz_q8_8,
+@@ -263,7 +265,7 @@
+       `CSR_CYCLEH, `CSR_MCYCLEH: rdata = cycle_counter[63:32];
+       `CSR_TIME: rdata = timer_counter[31:0];
+       `CSR_TIMEH: rdata = timer_counter[63:32];
+-      `CSR_MHARTID: rdata = 32'b0;
++      `CSR_MHARTID: rdata = HART_ID;
+       `CSR_MVENDORID: rdata = 32'h0;
+       `CSR_MARCHID: rdata = 32'h2b;
+       `CSR_MIMPID: rdata = 0;
+diff -ruN a/src/kianv_harris_edition/datapath_unit.v b/src/kianv_harris_edition/datapath_unit.v
+--- a/src/kianv_harris_edition/datapath_unit.v	2026-10-09 00:10:45.942529302 +0900
++++ b/src/kianv_harris_edition/datapath_unit.v	2026-10-09 00:10:46.114529256 +0900
+@@ -22,7 +22,8 @@
+ 
+ `include "riscv_defines.vh"
+ module datapath_unit #(
+-    parameter RESET_ADDR = 0
++    parameter RESET_ADDR = 0,
++    parameter HART_ID = 0
+ ) (
+     input wire clk,
+     input wire resetn,
+@@ -404,7 +405,9 @@
+       pc_on_exception
+   );
+ 
+-  csr_exception_handler #() csr_exception_handler_I (
++  csr_exception_handler #(
++      .HART_ID(HART_ID)
++  ) csr_exception_handler_I (
+       .clk              (clk),
+       .resetn           (resetn),
+       .sysclk_mhz_q8_8  (sysclk_mhz_q8_8),
+diff -ruN a/src/kianv_harris_edition/kianv_harris_mc_edition.v b/src/kianv_harris_edition/kianv_harris_mc_edition.v
+--- a/src/kianv_harris_edition/kianv_harris_mc_edition.v	2026-10-09 00:10:45.942529302 +0900
++++ b/src/kianv_harris_edition/kianv_harris_mc_edition.v	2026-10-09 00:10:46.114529256 +0900
 @@ -23,6 +23,7 @@
  `include "riscv_defines.vh"
  module kianv_harris_mc_edition #(
@@ -184,72 +162,102 @@
    ) datapath_unit_I (
        .clk            (clk),
        .resetn         (resetn),
---- a/src/kianv_harris_edition/datapath_unit.v
-+++ b/src/kianv_harris_edition/datapath_unit.v
-@@ -22,7 +22,8 @@
+diff -ruN a/src/kianv_harris_edition/main_fsm.v b/src/kianv_harris_edition/main_fsm.v
+--- a/src/kianv_harris_edition/main_fsm.v	2026-10-09 00:10:45.946529301 +0900
++++ b/src/kianv_harris_edition/main_fsm.v	2026-10-09 00:10:46.114529256 +0900
+@@ -89,7 +89,11 @@
+     input wire mul_ext_ready,
+     output reg is_instruction,
+     input wire stall,
+-    input wire mem_ready
++    input wire mem_ready,
++    output wire amo_lock,
++    output wire lr_read,
++    output wire sc_write,
++    input wire sc_abort
+ );
  
- `include "riscv_defines.vh"
- module datapath_unit #(
--    parameter RESET_ADDR = 0
-+    parameter RESET_ADDR = 0,
-+    parameter HART_ID = 0
- ) (
-     input wire clk,
-     input wire resetn,
-@@ -392,7 +393,9 @@
-       pc_on_exception
+   localparam load    = 7'b000_0011,
+@@ -445,7 +449,7 @@
+           is_store_unaligned: state_nxt = STORE_MISALIGN_0;
+           access_fault:       state_nxt = STORE_FAULT_0;
+           page_fault:         state_nxt = SPAGE_FAULT_0;
+-          mem_ready:          state_nxt = AMO_SC_SUCCESS;
++          mem_ready:          state_nxt = sc_abort ? AMO_SC_FAIL : AMO_SC_SUCCESS;
+           default:            state_nxt = AMO_SC_WRITE;
+         endcase
+       end
+@@ -1004,4 +1008,9 @@
+     incr_inst_retired = retire_pulse_int_final;
+   end
+ 
++  assign amo_lock = state == AMO_OP_READ || state == AMO_OP_WB || state == AMO_OP_EXEC ||
++                    state == AMO_OP_ADDR || state == AMO_OP_WRITE;
++  assign lr_read  = state == AMO_LR_READ;
++  assign sc_write = state == AMO_SC_WRITE;
++
+ endmodule
+diff -ruN a/src/soc.v b/src/soc.v
+--- a/src/soc.v	2026-10-09 00:10:45.946529301 +0900
++++ b/src/soc.v	2026-10-09 00:10:46.114529256 +0900
+@@ -110,6 +110,7 @@
+   wire [33:0] a_addr;
+   wire [31:0] a_wdata;
+   wire        b_valid, b_ready, b_fault, b_instr, b_irq3, b_irq7, b_go, b_run, b_meip;
++  wire        a_lock, a_lr, a_sc, a_scfail, b_lock, b_lr, b_sc, b_scfail;
+   wire [ 3:0] b_wstrb;
+   wire [33:0] b_addr;
+   wire [31:0] b_wdata;
+@@ -592,6 +593,10 @@
+       .access_fault   (a_fault),
+       .timer_counter  (timer_counter),
+       .is_instruction (a_instr),
++      .amo_lock       (a_lock),
++      .lr_read        (a_lr),
++      .sc_write       (a_sc),
++      .sc_abort       (a_scfail),
+       .icache_flush   (icache_flush),
+       .IRQ3           (IRQ3),
+       .IRQ7           (IRQ7),
+@@ -601,7 +606,8 @@
    );
  
--  csr_exception_handler #() csr_exception_handler_I (
-+  csr_exception_handler #(
-+      .HART_ID(HART_ID)
-+  ) csr_exception_handler_I (
-       .clk              (clk),
-       .resetn           (resetn),
-       .sysclk_mhz_q8_8  (sysclk_mhz_q8_8),
---- a/src/kianv_harris_edition/csr_exception_handler.v
-+++ b/src/kianv_harris_edition/csr_exception_handler.v
-@@ -21,7 +21,9 @@
- `default_nettype none
- `include "riscv_defines.vh"
+   kianv_harris_mc_edition #(
+-      .RESET_ADDR      (32'h2000_0000),
++      .RESET_ADDR      (32'h8000_0000),
++      .HART_ID         (1),
+       .NUM_ENTRIES_ITLB(`NUM_ENTRIES_ITLB),
+       .NUM_ENTRIES_DTLB(`NUM_ENTRIES_DTLB)
+   ) kianv_B (
+@@ -617,6 +623,10 @@
+       .access_fault   (b_fault),
+       .timer_counter  (),
+       .is_instruction (b_instr),
++      .amo_lock       (b_lock),
++      .lr_read        (b_lr),
++      .sc_write       (b_sc),
++      .sc_abort       (b_scfail),
+       .icache_flush   (),
+       .IRQ3           (b_irq3),
+       .IRQ7           (b_irq7),
+@@ -625,9 +635,17 @@
+       .PC             ()
+   );
  
--module csr_exception_handler (
-+module csr_exception_handler #(
-+    parameter HART_ID = 0
-+) (
-     input  wire                      clk,
-     input  wire                      resetn,
-     input  wire [              15:0] sysclk_mhz_q8_8,
-@@ -69,7 +71,9 @@
-   wire [31:0] stimecmp;
-   wire [31:0] stimecmph;
- 
--  csr_unit #() csr_unit_inst (
-+  csr_unit #(
-+      .HART_ID(HART_ID)
-+  ) csr_unit_inst (
-       .clk                   (clk),
-       .resetn                (resetn),
-       .sysclk_mhz_q8_8       (sysclk_mhz_q8_8),
---- a/src/kianv_harris_edition/csr_unit.v
-+++ b/src/kianv_harris_edition/csr_unit.v
-@@ -21,7 +21,9 @@
- `default_nettype none
- `include "riscv_defines.vh"
- 
--module csr_unit (
-+module csr_unit #(
-+    parameter HART_ID = 0
-+) (
-     input  wire                      clk,
-     input  wire                      resetn,
-     input  wire [              15:0] sysclk_mhz_q8_8,
-@@ -273,7 +275,7 @@
-       `CSR_CYCLEH: rdata = cycle_counter[63:32];
-       `CSR_TIME: rdata = timer_counter[31:0];
-       `CSR_TIMEH: rdata = timer_counter[63:32];
--      `CSR_MHARTID: rdata = 32'b0;
-+      `CSR_MHARTID: rdata = HART_ID;
-       `CSR_MVENDORID: rdata = 32'h0;
-       `CSR_MARCHID: rdata = 32'h2b;
-       `CSR_MIMPID: rdata = 0;
+-  amp_arb arb_I (
+-      .clk    (clk),
+-      .resetn (resetn_soc),
++  smp_arb arb_I (
++      .clk     (clk),
++      .resetn  (resetn_soc),
++      .a_lock  (a_lock),
++      .a_lr    (a_lr),
++      .a_sc    (a_sc),
++      .a_scfail(a_scfail),
++      .b_lock  (b_lock),
++      .b_lr    (b_lr),
++      .b_sc    (b_sc),
++      .b_scfail(b_scfail),
+       .a_valid(a_valid),
+       .a_wstrb(a_wstrb),
+       .a_addr (a_addr),
