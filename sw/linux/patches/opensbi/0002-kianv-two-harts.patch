@@ -1,0 +1,106 @@
+--- a/platform/fpga/kianv/Kconfig	2026-10-13 13:24:50.628470278 +0900
++++ b/platform/fpga/kianv/Kconfig	2026-10-13 13:24:50.632470277 +0900
+@@ -5,4 +5,5 @@
+ 	select FDT
+ 	select SERIAL_UART8250
+ 	select TIMER_MTIMER
++	select IPI_MSWI
+ 	default y
+--- a/platform/fpga/kianv/platform.c	2026-10-13 13:13:35.004673273 +0900
++++ b/platform/fpga/kianv/platform.c	2026-10-13 13:13:58.764665900 +0900
+@@ -26,7 +26,10 @@
+ #define KIANV_UART_REG_OFFSET 0
+ #define KIANV_PLIC_ADDR 0xc000000
+ #define KIANV_PLIC_NUM_SOURCES 3
+-#define KIANV_HART_COUNT 1
++#define KIANV_HART_COUNT 2
++/* The second hart has a CLINT of its own, and stays in reset until RUN is written. */
++#define KIANV_CLINT_B_ADDR 0x3000000
++#define KIANV_RUN_ADDR 0x40040004
+ #define KIANV_CLINT_ADDR 0x2004000
+ #define KIANV_ACLINT_MTIMER_FREQ 1000000
+ #define KIANV_ACLINT_MSWI_ADDR (KIANV_CLINT_ADDR + CLINT_MSWI_OFFSET)
+@@ -63,19 +66,63 @@
+ 	.mtimecmp_addr	= 0x2004000,
+ 	.mtimecmp_size	= 8,
+ 	.first_hartid	= 0,
+-	.hart_count	= KIANV_HART_COUNT,
++	.hart_count	= 1,
+ 	.has_64bit_mmio = false
+ };
+ 
++static struct aclint_mtimer_data mtimer_b = {
++	.mtime_freq	= 1000000,
++	.mtime_addr	= KIANV_CLINT_B_ADDR + 0xbff8,
++	.mtime_size	= 8,
++	.mtimecmp_addr	= KIANV_CLINT_B_ADDR + 0x4000,
++	.mtimecmp_size	= 8,
++	.first_hartid	= 1,
++	.hart_count	= 1,
++	.has_64bit_mmio = false
++};
++
++static struct aclint_mswi_data mswi = {
++	.addr		= 0x2000000,
++	.size		= ACLINT_MSWI_SIZE,
++	.first_hartid	= 0,
++	.hart_count	= 1,
++};
++
++static struct aclint_mswi_data mswi_b = {
++	.addr		= KIANV_CLINT_B_ADDR,
++	.size		= ACLINT_MSWI_SIZE,
++	.first_hartid	= 1,
++	.hart_count	= 1,
++};
++
+ 
+ /*
+  * kianv platform early initialization.
+  */
+ static int kianv_early_init(bool cold_boot)
+ {
++	/* Hart 1 enters this firmware at the same address and parks until it is started. */
++	if (cold_boot)
++		writel(1, (void *)KIANV_RUN_ADDR);
+ 	return 0;
+ }
+ 
++static int kianv_ipi_init(bool cold_boot)
++{
++	int ret;
++
++	if (cold_boot) {
++		ret = aclint_mswi_cold_init(&mswi);
++		if (ret)
++			return ret;
++		ret = aclint_mswi_cold_init(&mswi_b);
++		if (ret)
++			return ret;
++	}
++
++	return aclint_mswi_warm_init();
++}
++
+ /*
+  * Ariane platform final initialization.
+  */
+@@ -144,6 +191,9 @@
+ 		ret = aclint_mtimer_cold_init(&mtimer, NULL);
+ 		if (ret)
+ 			return ret;
++		ret = aclint_mtimer_cold_init(&mtimer_b, NULL);
++		if (ret)
++			return ret;
+ 	}
+ 
+ 	return aclint_mtimer_warm_init();
+@@ -156,7 +206,7 @@
+ 	.early_init   = kianv_early_init,
+ 	.final_init   = kianv_final_init,
+ 	.console_init = kianv_console_init,
+-//	.ipi_init = kianv_ipi_init,
++	.ipi_init     = kianv_ipi_init,
+ 	.timer_init   = kianv_timer_init
+ };
+ 

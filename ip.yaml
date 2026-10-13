@@ -99,9 +99,17 @@ tasks:
     run: bash htest/arbiter-faults.sh {{out}} {{dep.gf180mcu-kianv-rv32ima-sv32}} {{dep.to2610-kvc}}
     timeout: 5400
   chip:
-    desc: 出流片的 .v，在它上面跑 to2610-kvc 的各段，再跑两个核一起的那一段
+    desc: 出流片的 .v，在它上面跑 to2610-kvc 的各段（裸机、riscv-tests、引导、FreeRTOS），再跑两个核一起的那一段；两份 Linux 镜像先过 QEMU，在这一颗上起到 shell 的两遍交给接力
     run: bash htest/chip.sh {{out}} {{dep.gf180mcu-kianv-rv32ima-sv32}} {{dep.to2610-kvc}}
     timeout: 14400
+  linux-boot:
+    desc: to2610-kvc 的单核 Linux 从 Flash 起到 shell，接力跑：每一棒从前一棒的断点接着跑满时限，走完了后面的棒直接收工
+    run: bash htest/linux-boot.sh {{out}} {{dep.to2610-kvc}} linux
+    timeout: 19800
+  linux-smp:
+    desc: 两核的 SMP Linux 从 Flash 起到 shell 并跑并发那几句，接力跑
+    run: bash htest/linux-boot.sh {{out}} {{dep.to2610-kvc}} smp
+    timeout: 19800
 test:
   upstream:
   - { name: arb, task: arb, timeout: 900 }

@@ -1,5 +1,12 @@
 name: ci
-on: [push, pull_request, workflow_dispatch]
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      dep_refs:
+        description: 依赖取哪个分支（空格分隔的 仓=分支），不写取各仓的默认分支。依赖的提交还没并进它的主分支时，先对着它验一遍
+        default: ''
 jobs:
   ip:
     uses: Tape-Out/.github/.github/workflows/ip.yml@main
@@ -14,3 +21,156 @@ jobs:
       verilator: v5.052
       pip: pyyaml
       sv2v: v0.0.13
+      dep-refs: ${{ inputs.dep_refs }}
+      # 整片测试把仿真器、两份 Linux 的 Flash 镜像与脚本留给后面的接力
+      keep: build/relay
+  # 在这一颗上起 Linux 的两遍各是一串接力，两串同时跑：每棒跑满四个半小时交断点，走完了余下的棒直接收工。
+  # 仿真器是整片测试编好交过来的，yosys 与 sv2v 是给每个作业开头都要跑的 setup（拼源码树）用的
+  linux-1:
+    needs: ip
+    uses: Tape-Out/.github/.github/workflows/ip.yml@main
+    permissions:
+      contents: write
+    with:
+      apt: yosys
+      pip: pyyaml
+      sv2v: v0.0.13
+      dep-refs: ${{ inputs.dep_refs }}
+      tasks: linux-boot
+      restore: build/relay
+      keep: build/relay
+      stage: linux-1
+  linux-2:
+    needs: linux-1
+    uses: Tape-Out/.github/.github/workflows/ip.yml@main
+    permissions:
+      contents: write
+    with:
+      apt: yosys
+      pip: pyyaml
+      sv2v: v0.0.13
+      dep-refs: ${{ inputs.dep_refs }}
+      tasks: linux-boot
+      restore: build/relay
+      from: linux-1
+      keep: build/relay
+      stage: linux-2
+  linux-3:
+    needs: linux-2
+    uses: Tape-Out/.github/.github/workflows/ip.yml@main
+    permissions:
+      contents: write
+    with:
+      apt: yosys
+      pip: pyyaml
+      sv2v: v0.0.13
+      dep-refs: ${{ inputs.dep_refs }}
+      tasks: linux-boot
+      restore: build/relay
+      from: linux-2
+      keep: build/relay
+      stage: linux-3
+  linux-4:
+    needs: linux-3
+    uses: Tape-Out/.github/.github/workflows/ip.yml@main
+    permissions:
+      contents: write
+    with:
+      apt: yosys
+      pip: pyyaml
+      sv2v: v0.0.13
+      dep-refs: ${{ inputs.dep_refs }}
+      tasks: linux-boot
+      restore: build/relay
+      from: linux-3
+      keep: build/relay
+      stage: linux-4
+  smp-1:
+    needs: ip
+    uses: Tape-Out/.github/.github/workflows/ip.yml@main
+    permissions:
+      contents: write
+    with:
+      apt: yosys
+      pip: pyyaml
+      sv2v: v0.0.13
+      dep-refs: ${{ inputs.dep_refs }}
+      tasks: linux-smp
+      restore: build/relay
+      keep: build/relay
+      stage: smp-1
+  smp-2:
+    needs: smp-1
+    uses: Tape-Out/.github/.github/workflows/ip.yml@main
+    permissions:
+      contents: write
+    with:
+      apt: yosys
+      pip: pyyaml
+      sv2v: v0.0.13
+      dep-refs: ${{ inputs.dep_refs }}
+      tasks: linux-smp
+      restore: build/relay
+      from: smp-1
+      keep: build/relay
+      stage: smp-2
+  smp-3:
+    needs: smp-2
+    uses: Tape-Out/.github/.github/workflows/ip.yml@main
+    permissions:
+      contents: write
+    with:
+      apt: yosys
+      pip: pyyaml
+      sv2v: v0.0.13
+      dep-refs: ${{ inputs.dep_refs }}
+      tasks: linux-smp
+      restore: build/relay
+      from: smp-2
+      keep: build/relay
+      stage: smp-3
+  smp-4:
+    needs: smp-3
+    uses: Tape-Out/.github/.github/workflows/ip.yml@main
+    permissions:
+      contents: write
+    with:
+      apt: yosys
+      pip: pyyaml
+      sv2v: v0.0.13
+      dep-refs: ${{ inputs.dep_refs }}
+      tasks: linux-smp
+      restore: build/relay
+      from: smp-3
+      keep: build/relay
+      stage: smp-4
+  smp-5:
+    needs: smp-4
+    uses: Tape-Out/.github/.github/workflows/ip.yml@main
+    permissions:
+      contents: write
+    with:
+      apt: yosys
+      pip: pyyaml
+      sv2v: v0.0.13
+      dep-refs: ${{ inputs.dep_refs }}
+      tasks: linux-smp
+      restore: build/relay
+      from: smp-4
+      keep: build/relay
+      stage: smp-5
+  smp-6:
+    needs: smp-5
+    uses: Tape-Out/.github/.github/workflows/ip.yml@main
+    permissions:
+      contents: write
+    with:
+      apt: yosys
+      pip: pyyaml
+      sv2v: v0.0.13
+      dep-refs: ${{ inputs.dep_refs }}
+      tasks: linux-smp
+      restore: build/relay
+      from: smp-5
+      keep: build/relay
+      stage: smp-6

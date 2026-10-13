@@ -1,0 +1,16 @@
+reject Kernel panic
+reject Oops
+expect sum ok, jump
+expect OpenSBI
+expect Linux version
+expect smp: Brought up 1 node, 2 CPUs
+expect to2610-kvc up
+expect ~ #
+send echo cpus=$(grep -c ^processor /proc/cpuinfo)\n
+expect cpus=2
+send apptest\n
+expect apptest all=10 ok=10
+send (while :; do :; done) & a=$!; (while :; do :; done) & b=$!; sleep 3; echo busy=$(awk '$1=="cpu0"||$1=="cpu1"{n+=($2>0)} END{print n}' /proc/stat); kill $a $b\n
+expect busy=2
+send echo ipi=$(awk '/IPI/{n+=($2>0)+($3>0)} END{print (n>=2)}' /proc/interrupts)\n
+expect ipi=1

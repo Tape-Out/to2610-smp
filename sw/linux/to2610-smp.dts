@@ -1,0 +1,43 @@
+/* to2610-kvc 的设备树上多一个 hart 与它自己的 CLINT（0x0300_0000）。
+ * to2610-smt 的两个硬件线程在软件看来是同样的两个 hart，地址图相同，用同一份 */
+/include/ "to2610-kvc.dts"
+
+/ {
+	cpus {
+		cpu@1 {
+			phandle = <0x21>;
+			device_type = "cpu";
+			reg = <0x01>;
+			status = "okay";
+			compatible = "kianv\0riscv";
+			riscv,isa = "rv32ima";
+			riscv,isa-base = "rv32i";
+			riscv,isa-extensions = "i", "m", "a", "sstc", "zicntr", "zicsr", "zifencei";
+			mmu-type = "riscv,sv32";
+			uarch = "KianV,sv32";
+
+			interrupt-controller {
+				#interrupt-cells = <0x01>;
+				interrupt-controller;
+				compatible = "riscv,cpu-intc";
+				phandle = <0x22>;
+			};
+		};
+
+		cpu-map {
+			cluster0 {
+				core1 {
+					cpu = <0x21>;
+				};
+			};
+		};
+	};
+
+	soc {
+		clint@3000000 {
+			interrupts-extended = <0x22 0x03 0x22 0x07>;
+			reg = <0x3000000 0x10000>;
+			compatible = "sifive,clint0\0riscv,clint0";
+		};
+	};
+};
