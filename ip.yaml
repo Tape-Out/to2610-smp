@@ -82,6 +82,8 @@ asic:
   flow: syn_sta
   # 同 to2610-amp：两个核的布线后等价比对在托管机上吃满 16 GB 内存与 10 GB 交换、五小时没有结束；布线前的那一道照跑
   skip: [postRouteLec]
+  # 时序分析只算两组工艺角：默认的十三组在托管机上六小时算不完
+  signoff: {MAX: [RCworst], MIN: [RCbest]}
   # 引脚与 to2610-kvc 逐位相同，原样占 payload 的 0 到 53 位：kvc、amp、smp 三颗用同一块底板
   pads:
   - { in: bidir_in, out: bidir_out, oe: bidir_oe }

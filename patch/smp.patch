@@ -1,6 +1,6 @@
 diff -ruN a/src/amp_ctl.v b/src/amp_ctl.v
---- a/src/amp_ctl.v	2026-10-09 00:10:45.950529301 +0900
-+++ b/src/amp_ctl.v	2026-10-09 00:10:46.114529256 +0900
+--- a/src/amp_ctl.v	2026-10-14 22:20:33.627712550 +0900
++++ b/src/amp_ctl.v	2026-10-14 22:20:33.635712547 +0900
 @@ -1,5 +1,5 @@
  // 两个核之间的那点东西，挂在 KianV 的片上总线上，地址 0x4004_0000 起一页，两个核都看得见。
 -//   0x00 ID      只读，0x414D5031（"AMP1"）
@@ -18,8 +18,8 @@ diff -ruN a/src/amp_ctl.v b/src/amp_ctl.v
                         sel == 3'd2 || sel == 3'd3 ? {24'h0, bell_a} :
                         sel == 3'd4 || sel == 3'd5 ? {24'h0, bell_b} :
 diff -ruN a/src/kianv_harris_edition/control_unit.v b/src/kianv_harris_edition/control_unit.v
---- a/src/kianv_harris_edition/control_unit.v	2026-10-09 00:10:45.942529302 +0900
-+++ b/src/kianv_harris_edition/control_unit.v	2026-10-09 00:10:46.114529256 +0900
+--- a/src/kianv_harris_edition/control_unit.v	2026-10-14 22:20:33.627712550 +0900
++++ b/src/kianv_harris_edition/control_unit.v	2026-10-14 22:20:33.635712547 +0900
 @@ -95,7 +95,12 @@
      input  wire mul_ready,
  
@@ -46,45 +46,77 @@ diff -ruN a/src/kianv_harris_edition/control_unit.v b/src/kianv_harris_edition/c
        .mul_ext_valid(mul_ext_valid),
        .mul_ext_ready(mul_ext_ready)
 diff -ruN a/src/kianv_harris_edition/csr_exception_handler.v b/src/kianv_harris_edition/csr_exception_handler.v
---- a/src/kianv_harris_edition/csr_exception_handler.v	2026-10-09 00:10:45.942529302 +0900
-+++ b/src/kianv_harris_edition/csr_exception_handler.v	2026-10-09 00:10:46.114529256 +0900
-@@ -21,7 +21,9 @@
+--- a/src/kianv_harris_edition/csr_exception_handler.v	2026-10-14 22:20:33.627712550 +0900
++++ b/src/kianv_harris_edition/csr_exception_handler.v	2026-10-14 22:20:33.675712531 +0900
+@@ -21,10 +21,14 @@
  `default_nettype none
  `include "riscv_defines.vh"
  
 -module csr_exception_handler (
 +module csr_exception_handler #(
-+    parameter HART_ID = 0
++    parameter HART_ID  = 0,
++    parameter EXT_TIME = 0
 +) (
      input  wire                      clk,
      input  wire                      resetn,
      input  wire [              15:0] sysclk_mhz_q8_8,
-@@ -69,7 +71,9 @@
++    input  wire [              63:0] time_i,
+     input  wire                      incr_inst_retired,
+     input  wire [              11:0] CSRAddr,
+     input  wire [`CSR_OP_WIDTH -1:0] CSRop,
+@@ -69,10 +73,14 @@
    wire [31:0] stimecmp;
    wire [31:0] stimecmph;
  
 -  csr_unit #() csr_unit_inst (
 +  csr_unit #(
-+      .HART_ID(HART_ID)
++      .HART_ID (HART_ID),
++      .EXT_TIME(EXT_TIME)
 +  ) csr_unit_inst (
        .clk                   (clk),
        .resetn                (resetn),
        .sysclk_mhz_q8_8       (sysclk_mhz_q8_8),
++      .time_i                (time_i),
+       .incr_inst_retired     (incr_inst_retired),
+       .CSRAddr               (CSRAddr),
+       .CSRop                 (CSRop),
 diff -ruN a/src/kianv_harris_edition/csr_unit.v b/src/kianv_harris_edition/csr_unit.v
---- a/src/kianv_harris_edition/csr_unit.v	2026-10-09 00:10:45.946529301 +0900
-+++ b/src/kianv_harris_edition/csr_unit.v	2026-10-09 00:10:46.114529256 +0900
-@@ -21,7 +21,9 @@
+--- a/src/kianv_harris_edition/csr_unit.v	2026-10-14 22:20:33.627712550 +0900
++++ b/src/kianv_harris_edition/csr_unit.v	2026-10-14 22:20:33.675712531 +0900
+@@ -21,10 +21,14 @@
  `default_nettype none
  `include "riscv_defines.vh"
  
 -module csr_unit (
 +module csr_unit #(
-+    parameter HART_ID = 0
++    parameter HART_ID  = 0,
++    parameter EXT_TIME = 0
 +) (
      input  wire                      clk,
      input  wire                      resetn,
      input  wire [              15:0] sysclk_mhz_q8_8,
-@@ -263,7 +265,7 @@
++    input  wire [              63:0] time_i,
+     input  wire                      incr_inst_retired,
+     input  wire [              11:0] CSRAddr,
+     input  wire [`CSR_OP_WIDTH -1:0] CSRop,
+@@ -97,12 +101,15 @@
+     end
+   end
+ 
++  // 自己的计数随核复位：放开得晚的核数得晚，几个核的 time 要一样，后放开的取先放开的那一个
++  wire [63:0] own_time;
+   counter #(64) timer_cnt_I (
+       resetn,
+       clk,
+       tick,
+-      timer_counter
++      own_time
+   );
++  assign timer_counter = EXT_TIME ? time_i : own_time;
+ 
+   reg  [63:0] cycle_counter;
+ 
+@@ -263,7 +270,7 @@
        `CSR_CYCLEH, `CSR_MCYCLEH: rdata = cycle_counter[63:32];
        `CSR_TIME: rdata = timer_counter[31:0];
        `CSR_TIMEH: rdata = timer_counter[63:32];
@@ -94,41 +126,60 @@ diff -ruN a/src/kianv_harris_edition/csr_unit.v b/src/kianv_harris_edition/csr_u
        `CSR_MARCHID: rdata = 32'h2b;
        `CSR_MIMPID: rdata = 0;
 diff -ruN a/src/kianv_harris_edition/datapath_unit.v b/src/kianv_harris_edition/datapath_unit.v
---- a/src/kianv_harris_edition/datapath_unit.v	2026-10-09 00:10:45.942529302 +0900
-+++ b/src/kianv_harris_edition/datapath_unit.v	2026-10-09 00:10:46.114529256 +0900
-@@ -22,7 +22,8 @@
+--- a/src/kianv_harris_edition/datapath_unit.v	2026-10-14 22:20:33.627712550 +0900
++++ b/src/kianv_harris_edition/datapath_unit.v	2026-10-14 22:20:33.679712528 +0900
+@@ -22,11 +22,14 @@
  
  `include "riscv_defines.vh"
  module datapath_unit #(
 -    parameter RESET_ADDR = 0
 +    parameter RESET_ADDR = 0,
-+    parameter HART_ID = 0
++    parameter HART_ID = 0,
++    parameter EXT_TIME = 0
  ) (
      input wire clk,
      input wire resetn,
-@@ -404,7 +405,9 @@
+     input wire [15:0] sysclk_mhz_q8_8,
++    input wire [63:0] time_i,
+ 
+     input  wire [`RESULT_WIDTH   -1:0] ResultSrc,
+     input  wire [`ALU_CTRL_WIDTH -1:0] ALUControl,
+@@ -404,10 +407,14 @@
        pc_on_exception
    );
  
 -  csr_exception_handler #() csr_exception_handler_I (
 +  csr_exception_handler #(
-+      .HART_ID(HART_ID)
++      .HART_ID (HART_ID),
++      .EXT_TIME(EXT_TIME)
 +  ) csr_exception_handler_I (
        .clk              (clk),
        .resetn           (resetn),
        .sysclk_mhz_q8_8  (sysclk_mhz_q8_8),
++      .time_i           (time_i),
+       .incr_inst_retired(incr_inst_retired),
+       .CSRAddr          (CSRAddr),
+       .CSRop            (CSRop),
 diff -ruN a/src/kianv_harris_edition/kianv_harris_mc_edition.v b/src/kianv_harris_edition/kianv_harris_mc_edition.v
---- a/src/kianv_harris_edition/kianv_harris_mc_edition.v	2026-10-09 00:10:45.942529302 +0900
-+++ b/src/kianv_harris_edition/kianv_harris_mc_edition.v	2026-10-09 00:10:46.114529256 +0900
-@@ -23,6 +23,7 @@
+--- a/src/kianv_harris_edition/kianv_harris_mc_edition.v	2026-10-14 22:20:33.627712550 +0900
++++ b/src/kianv_harris_edition/kianv_harris_mc_edition.v	2026-10-14 22:20:33.679712528 +0900
+@@ -23,12 +23,15 @@
  `include "riscv_defines.vh"
  module kianv_harris_mc_edition #(
      parameter RESET_ADDR = 0,
 +    parameter HART_ID = 0,
++    parameter EXT_TIME = 0,
      parameter NUM_ENTRIES_ITLB = 64,
      parameter NUM_ENTRIES_DTLB = 64
  ) (
-@@ -43,7 +44,11 @@
+     input  wire        clk,
+     input  wire        resetn,
+     input  wire [15:0] sysclk_mhz_q8_8,
++    input  wire [63:0] time_i,
+     output wire        mem_valid,
+     input  wire        mem_ready,
+     output wire [ 3:0] mem_wstrb,
+@@ -43,7 +46,11 @@
      input  wire        IRQ11,
      output wire [63:0] timer_counter,
      output wire        is_instruction,
@@ -141,7 +192,7 @@ diff -ruN a/src/kianv_harris_edition/kianv_harris_mc_edition.v b/src/kianv_harri
  );
  
    wire [                 31:0] Instr;
-@@ -183,6 +188,10 @@
+@@ -183,6 +190,10 @@
        .selectPC         (selectPC),
        .tlb_flush        (tlb_flush),
        .icache_flush     (icache_flush),
@@ -152,19 +203,25 @@ diff -ruN a/src/kianv_harris_edition/kianv_harris_mc_edition.v b/src/kianv_harri
  
        .mul_valid(mul_valid),
        .mul_ready(mul_ready),
-@@ -217,7 +226,8 @@
+@@ -217,11 +228,14 @@
    );
  
    datapath_unit #(
 -      .RESET_ADDR(RESET_ADDR)
 +      .RESET_ADDR(RESET_ADDR),
-+      .HART_ID   (HART_ID)
++      .HART_ID   (HART_ID),
++      .EXT_TIME  (EXT_TIME)
    ) datapath_unit_I (
        .clk            (clk),
        .resetn         (resetn),
+       .sysclk_mhz_q8_8(sysclk_mhz_q8_8),
++      .time_i         (time_i),
+ 
+       .ResultSrc (ResultSrc),
+       .ALUControl(ALUControl),
 diff -ruN a/src/kianv_harris_edition/main_fsm.v b/src/kianv_harris_edition/main_fsm.v
---- a/src/kianv_harris_edition/main_fsm.v	2026-10-09 00:10:45.946529301 +0900
-+++ b/src/kianv_harris_edition/main_fsm.v	2026-10-09 00:10:46.114529256 +0900
+--- a/src/kianv_harris_edition/main_fsm.v	2026-10-14 22:20:33.627712550 +0900
++++ b/src/kianv_harris_edition/main_fsm.v	2026-10-14 22:20:33.639712546 +0900
 @@ -89,7 +89,11 @@
      input wire mul_ext_ready,
      output reg is_instruction,
@@ -178,7 +235,7 @@ diff -ruN a/src/kianv_harris_edition/main_fsm.v b/src/kianv_harris_edition/main_
  );
  
    localparam load    = 7'b000_0011,
-@@ -445,7 +449,7 @@
+@@ -446,7 +450,7 @@
            is_store_unaligned: state_nxt = STORE_MISALIGN_0;
            access_fault:       state_nxt = STORE_FAULT_0;
            page_fault:         state_nxt = SPAGE_FAULT_0;
@@ -187,7 +244,7 @@ diff -ruN a/src/kianv_harris_edition/main_fsm.v b/src/kianv_harris_edition/main_
            default:            state_nxt = AMO_SC_WRITE;
          endcase
        end
-@@ -1004,4 +1008,9 @@
+@@ -1006,4 +1010,9 @@
      incr_inst_retired = retire_pulse_int_final;
    end
  
@@ -198,8 +255,8 @@ diff -ruN a/src/kianv_harris_edition/main_fsm.v b/src/kianv_harris_edition/main_
 +
  endmodule
 diff -ruN a/src/soc.v b/src/soc.v
---- a/src/soc.v	2026-10-09 00:10:45.946529301 +0900
-+++ b/src/soc.v	2026-10-09 00:10:46.114529256 +0900
+--- a/src/soc.v	2026-10-14 22:20:33.627712550 +0900
++++ b/src/soc.v	2026-10-14 22:20:33.679712528 +0900
 @@ -110,6 +110,7 @@
    wire [33:0] a_addr;
    wire [31:0] a_wdata;
@@ -208,7 +265,15 @@ diff -ruN a/src/soc.v b/src/soc.v
    wire [ 3:0] b_wstrb;
    wire [33:0] b_addr;
    wire [31:0] b_wdata;
-@@ -592,6 +593,10 @@
+@@ -583,6 +584,7 @@
+       .clk            (clk),
+       .resetn         (resetn_soc),
+       .sysclk_mhz_q8_8(sysclk_mhz_q8_8),
++      .time_i         (64'd0),
+       .mem_ready      (a_ready),
+       .mem_valid      (a_valid),
+       .mem_wstrb      (a_wstrb),
+@@ -592,6 +594,10 @@
        .access_fault   (a_fault),
        .timer_counter  (timer_counter),
        .is_instruction (a_instr),
@@ -219,17 +284,25 @@ diff -ruN a/src/soc.v b/src/soc.v
        .icache_flush   (icache_flush),
        .IRQ3           (IRQ3),
        .IRQ7           (IRQ7),
-@@ -601,7 +606,8 @@
+@@ -601,13 +607,16 @@
    );
  
    kianv_harris_mc_edition #(
 -      .RESET_ADDR      (32'h2000_0000),
 +      .RESET_ADDR      (32'h8000_0000),
 +      .HART_ID         (1),
++      .EXT_TIME        (1),
        .NUM_ENTRIES_ITLB(`NUM_ENTRIES_ITLB),
        .NUM_ENTRIES_DTLB(`NUM_ENTRIES_DTLB)
    ) kianv_B (
-@@ -617,6 +623,10 @@
+       .clk            (clk),
+       .resetn         (resetn_soc && b_go),
+       .sysclk_mhz_q8_8(sysclk_mhz_q8_8),
++      .time_i         (timer_counter),
+       .mem_ready      (b_ready),
+       .mem_valid      (b_valid),
+       .mem_wstrb      (b_wstrb),
+@@ -617,6 +626,10 @@
        .access_fault   (b_fault),
        .timer_counter  (),
        .is_instruction (b_instr),
@@ -240,7 +313,7 @@ diff -ruN a/src/soc.v b/src/soc.v
        .icache_flush   (),
        .IRQ3           (b_irq3),
        .IRQ7           (b_irq7),
-@@ -625,9 +635,17 @@
+@@ -625,9 +638,17 @@
        .PC             ()
    );
  

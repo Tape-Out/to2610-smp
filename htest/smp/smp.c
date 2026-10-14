@@ -8,6 +8,7 @@
  *   两个核跑的是同一段循环，步子一样就会一直错开、谁也碰不上谁，所以每圈垫几条指令，两个核垫的不一样
  *   预留跨核作废：第一个核 LR 之后第二个核写了同一个字，SC 写不成；写的是别的字，SC 照样写成
  *   核间中断两个方向各一次，第二个核自己的计时器中断一次
+ *   第二个核读到的 time 与 CLINT 的 mtime 是同一个数，夹在前后两次读 mtime 之间：放开之后、收回再放开之后各核一次
  *   收回第二个核它就停，再放开它从头来
  */
 #include <stdint.h>
@@ -28,12 +29,13 @@
 
 #define N 200
 
-enum { PLAIN = 1, AMO, SPIN, LRSC, POKE_CELL, POKE_OTHER, IPI, TICK };
+enum { PLAIN = 1, AMO, SPIN, LRSC, POKE_CELL, POKE_OTHER, IPI, TICK, TIME };
 
 static volatile uint32_t cmd, ack, hart_b, beat, oops_b;
 static volatile uint32_t plain, added, lock, locked, cond;
 static volatile uint32_t retry[2], waits[2], soft[2], tick_b;
 static volatile uint32_t cell, other;
+static volatile uint32_t time_ok, time_d;
 static uint32_t seq;
 
 static void putch(char c) {
@@ -174,6 +176,14 @@ void main_b(void) {
         REG(CLINT_B + MTIMECMP) = REG(CLINT_B + MTIME) + 200;
         REG(CLINT_B + MTIMECMP + 4) = REG(CLINT_B + MTIME + 4);
         break;
+      case TIME: {
+        uint32_t t0 = REG(CLINT_A + MTIME);
+        uint32_t tb = CSR_R(time);
+        uint32_t t1 = REG(CLINT_A + MTIME);
+        time_d = tb - t0;
+        time_ok = tb - t0 <= t1 - t0;
+        break;
+      }
       default:
         work(c & 0xff, 1);
     }
@@ -268,6 +278,8 @@ int main(void) {
   verdict("ipi", bad || REG(CLINT_A + MSIP) != 0 || REG(CLINT_B + MSIP) != 0, soft[1] << 16 | soft[0]);
   bad = ask(TICK) | UNTIL(tick_b == 1, 100);
   verdict("tick", bad, tick_b);
+  bad = ask(TIME);
+  verdict("time", bad || !time_ok, time_d);
 
   REG(RUN) = 0;
   for (volatile uint32_t i = 0; i < 200; i++) {}
@@ -278,6 +290,8 @@ int main(void) {
   REG(RUN) = 1;
   bad = UNTIL(hart_b != 0, 100) | ask(POKE_OTHER);
   verdict("again", bad || hart_b != 0x101, hart_b);
+  bad = ask(TIME);
+  verdict("time again", bad || !time_ok, time_d);
   say("done\n");
   for (;;) {}
 }
