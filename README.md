@@ -37,7 +37,7 @@ $ ran test to2610-smp                     # the arbiter alone, then the chip tes
 $ ran asic to2610-smp                     # to2610_smp.v, ecc at 50 MHz, report.json
 ```
 
-`arb` drives the arbiter with two model cores and a slow slave, then plants seven faults in it, one at a time; each must turn the test red. `chip` runs on the Verilog file that goes to the shuttle: the tests of `to2610-kvc` unchanged, then `htest/smp`, one program on both cores. Its first shared counter is incremented without any atomics and must lose updates; the next three, with `amoadd`, a spinlock on `amoswap`, and LR/SC, must not.
+`arb` drives the arbiter with two model cores and a slow slave, then plants eight faults in it, one at a time; each must turn the test red. `chip` runs on the Verilog file that goes to the shuttle: the tests of `to2610-kvc` unchanged, FreeRTOS, then `htest/smp`, one program on both cores. Its first shared counter is incremented without any atomics and must lose updates; the next three, with `amoadd`, a spinlock on `amoswap`, and LR/SC, must not. The second core reads the same `time` as the CLINT, after it is first released and again after it is taken back and released: its own counter would start only when it is released, so it takes the first core's.
 
 Linux runs on the delivered file too, relayed over CI jobs since a boot takes hours of simulation: the single-core image of `to2610-kvc` unchanged, and a two-hart image built by `sw/linux` (a device tree with both harts and their CLINTs, an SMP kernel, and an OpenSBI platform that releases the second core at cold boot). The SMP run brings up both CPUs, runs `apptest`, keeps two busy loops on two CPUs and counts IPIs on both. `to2610-smt` boots the same image on its two hardware threads.
 
